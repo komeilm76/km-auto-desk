@@ -1,0 +1,166 @@
+i want a textFinder.
+and its my textFinder Interfaces 
+now please create a TextFinder for me exactly same that interfaces 
+its my interfaces:
+
+/**
+ * A TextFinder should provide an abstraction layer to perform text searches
+ *
+ * @interface TextFinderInterface
+ */
+export declare enum ColorMode {
+    BGR = 0,
+    RGB = 1
+}
+
+export declare class Image {
+    readonly width: number;
+    readonly height: number;
+    readonly data: Buffer;
+    readonly channels: number;
+    readonly id: string;
+    readonly bitsPerPixel: number;
+    readonly byteWidth: number;
+    readonly colorMode: ColorMode;
+    readonly pixelDensity: {
+        scaleX: number;
+        scaleY: number;
+    };
+    /**
+     * {@link Image} class constructor
+     * @param width {@link Image} width in pixels
+     * @param height {@link Image} height in pixels
+     * @param data Generic {@link Image} data
+     * @param channels Amount of {@link Image} channels
+     * @param id Image identifier
+     * @param bitsPerPixel Number of bits per single pixel
+     * @param byteWidth Total number of bytes per image line
+     * @param colorMode An images color mode, defaults to {@link ColorMode.BGR}
+     * @param pixelDensity Object containing scale info to work with e.g. Retina display data where the reported display size and pixel size differ (Default: {scaleX: 1.0, scaleY: 1.0})
+     */
+    constructor(width: number, height: number, data: Buffer, channels: number, id: string, bitsPerPixel: number, byteWidth: number, colorMode?: ColorMode, pixelDensity?: {
+        scaleX: number;
+        scaleY: number;
+    });
+    /**
+     * {@link hasAlphaChannel} return true if an {@link Image} has an additional (fourth) alpha channel
+     */
+    get hasAlphaChannel(): boolean;
+    /**
+     * {@link toRGB} converts an {@link Image} from BGR color mode (default within nut.js) to RGB
+     */
+    toRGB(): Promise<Image>;
+    /**
+     * {@link toBGR} converts an {@link Image} from RGB color mode to RGB
+     */
+    toBGR(): Promise<Image>;
+    /**
+     * {@link fromRGBData} creates an {@link Image} from provided RGB data
+     */
+    static fromRGBData(width: number, height: number, data: Buffer, channels: number, id: string, bitsPerPixel: number, byteWidth: number): Image;
+}
+
+export declare class MatchRequest<NEEDLE_TYPE, PROVIDER_DATA_TYPE> {
+    readonly haystack: Image;
+    readonly needle: NEEDLE_TYPE;
+    readonly confidence: number | undefined;
+    readonly providerData?: PROVIDER_DATA_TYPE | undefined;
+    constructor(haystack: Image, needle: NEEDLE_TYPE, confidence: number | undefined, providerData?: PROVIDER_DATA_TYPE | undefined);
+}
+
+
+export declare class MatchResult<LOCATION_TYPE> {
+    readonly confidence: number;
+    readonly location: LOCATION_TYPE;
+    readonly error?: Error | undefined;
+    constructor(confidence: number, location: LOCATION_TYPE, error?: Error | undefined);
+}
+
+export declare class Region {
+    left: number;
+    top: number;
+    width: number;
+    height: number;
+    constructor(left: number, top: number, width: number, height: number);
+    area(): number;
+    toString(): string;
+}
+
+export interface WindowElementDescription {
+    id?: string;
+    role?: string;
+    type?: string;
+    title?: string | RegExp;
+    value?: string | RegExp;
+    selectedText?: string | RegExp;
+}
+
+
+export declare class RGBA {
+    readonly R: number;
+    readonly G: number;
+    readonly B: number;
+    readonly A: number;
+    constructor(R: number, G: number, B: number, A: number);
+    toString(): string;
+    toHex(): string;
+}
+
+type Query = {
+    id: string;
+    type: "text";
+    by: {
+        line: string;
+    };
+} | {
+    id: string;
+    type: "text";
+    by: {
+        word: string;
+    };
+} | {
+    id: string;
+    type: "window";
+    by: {
+        title: string | RegExp;
+    };
+} | {
+    id: string;
+    type: "color";
+    by: {
+        color: RGBA;
+    };
+} | {
+    id: string;
+    type: "window-element";
+    by: {
+        description: WindowElementDescription;
+    };
+};
+
+export type TextQuery = Extract<Query, {
+    type: "text";
+}>;
+export interface TextFinderInterface {
+    /**
+     * findMatch should provide an abstraction to search for an image needle
+     * in another image haystack
+     *
+     * @param {MatchRequest} matchRequest A {@link MatchRequest} containing needed matching data
+     * @returns {Promise<MatchResult>} A {@link MatchResult} holding the match probability and location
+     * @memberof TextFinderInterface
+     */
+    findMatch<PROVIDER_DATA_TYPE>(matchRequest: MatchRequest<TextQuery, PROVIDER_DATA_TYPE>): Promise<MatchResult<Region>>;
+    /**
+     * findMatches should provide an abstraction to search for an image needle
+     * in another image haystack
+     *
+     * @param {MatchRequest} matchRequest A {@link MatchRequest} containing needed matching data
+     * @returns {Promise<MatchResult[]>} A list of {@link MatchResult}s holding the match probability and location
+     * @memberof TextFinderInterface
+     */
+    findMatches<PROVIDER_DATA_TYPE>(matchRequest: MatchRequest<TextQuery, PROVIDER_DATA_TYPE>): Promise<MatchResult<Region>[]>;
+}
+
+
+now Write clean code and write in every lines a description about what do you do in a comment.
