@@ -1,14 +1,146 @@
 import Tesseract, { createWorker, PSM, OEM } from 'tesseract.js';
 import sharp, { Channels } from 'sharp';
-import { ColorMode, Image } from '@nut-tree-fork/shared';
-import { providerRegistry } from '@nut-tree-fork/nut-js';
+import { ColorMode, providerRegistry } from '@nut-tree-fork/nut-js';
+import { Image } from '@nut-tree-fork/nut-js';
+import { TestEvent } from 'node:test/reporters';
 // ==================== ENUM DEFINITIONS ====================
 
+// ==================== INTERFACE DEFINITIONS ====================
+
 /**
- * ColorMode enum representing different color modes for images
+ * Interface for OCR choice with text and confidence
  */
+interface Choice {
+  text: string;
+  confidence: number;
+}
+
+/**
+ * Interface for baseline coordinates
+ */
+interface Baseline {
+  x0: number;
+  y0: number;
+  x1: number;
+  y1: number;
+  has_baseline: boolean;
+}
+
+/**
+ * Interface for row attributes in OCR
+ */
+interface RowAttributes {
+  ascenders: number;
+  descenders: number;
+  row_height: number;
+}
+
+/**
+ * Interface for OCR page results
+ */
+interface Page {
+  blocks: Block[] | null;
+  confidence: number;
+  oem: string;
+  osd: string;
+  psm: string;
+  text: string;
+  version: string;
+  hocr: string | null;
+  tsv: string | null;
+  box: string | null;
+  unlv: string | null;
+  sd: string | null;
+  imageColor: string | null;
+  imageGrey: string | null;
+  imageBinary: string | null;
+  rotateRadians: number | null;
+  pdf: number[] | null;
+  debug: string | null;
+}
+
+/**
+ * Interface for OCR block results
+ */
+interface Block {
+  paragraphs: Paragraph[];
+  text: string;
+  confidence: number;
+  bbox: Bbox;
+  blocktype: string;
+  page: Page;
+}
+
+/**
+ * Interface for OCR line results
+ */
+interface Line {
+  words: Word[];
+  text: string;
+  confidence: number;
+  baseline: Baseline;
+  rowAttributes: RowAttributes;
+  bbox: Bbox;
+}
+
+/**
+ * Interface for OCR paragraph results
+ */
+interface Paragraph {
+  lines: Line[];
+  text: string;
+  confidence: number;
+  bbox: Bbox;
+  is_ltr: boolean;
+}
+
+/**
+ * Interface for OCR word results
+ */
+interface Word {
+  symbols: Symbol[];
+  choices: Choice[];
+  text: string;
+  confidence: number;
+  bbox: Bbox;
+  font_name: string;
+}
+
+/**
+ * Interface for OCR symbol results
+ */
+interface Symbol {
+  text: string;
+  confidence: number;
+  bbox: Bbox;
+  is_superscript: boolean;
+  is_subscript: boolean;
+  is_dropcap: boolean;
+}
+
+/**
+ * Interface for bounding box coordinates
+ */
+interface Bbox {
+  x0: number;
+  y0: number;
+  x1: number;
+  y1: number;
+}
+
+/**
+ * Interface for Tesseract.js recognize result
+ */
+interface RecognizeResult {
+  jobId: string;
+  data: Page;
+}
 
 // ==================== CLASS DEFINITIONS ====================
+
+/**
+ * Image class representing an image with various properties and methods
+ */
 
 /**
  * MatchRequest class representing a request to find text within an image
@@ -226,14 +358,14 @@ export class DefaultAdapter implements TextFinderInterface {
   /**
    * Tesseract.js worker for OCR operations
    */
-  worker: Tesseract.Worker | null = null;
+  worker: null | Tesseract.Worker = null;
 
   /**
    * Initializes the Tesseract.js worker
    */
   async initializeWorker(): Promise<void> {
     if (!this.worker) {
-      this.worker = await createWorker('eng', OEM.LSTM_ONLY, {});
+      this.worker = await Tesseract.createWorker('eng', OEM.LSTM_ONLY);
       await this.worker.setParameters({
         tessedit_pageseg_mode: PSM.AUTO,
       });
@@ -301,19 +433,21 @@ export class DefaultAdapter implements TextFinderInterface {
       const imageBuffer = await this.prepareImageForOCR(haystack);
 
       // Perform OCR on the image
-
-      const { data } = await (this.worker as Tesseract.Worker).recognize(
+      const result = await (this.worker as Tesseract.Worker).recognize(
         imageBuffer,
         {},
         { blocks: true }
       );
 
       // Find text matches in the OCR results
-      const matches = this.findTextInOCRResults(data, searchText, minConfidence);
+      const matches = this.findTextInOCRResults(result.data, searchText, minConfidence);
 
       return matches;
     } catch (error) {
       throw error instanceof Error ? error : new Error('Unknown error during text recognition');
+    } finally {
+      // Clean up worker to free resources
+      await this.terminateWorker();
     }
   }
 
@@ -352,70 +486,75 @@ export class DefaultAdapter implements TextFinderInterface {
 
   /**
    * Finds text in OCR results and returns matching regions
-   * @param ocrData - OCR result data from Tesseract.js
+   * @param page - OCR page data from Tesseract.js
    * @param searchText - The text to search for
    * @param minConfidence - Minimum confidence threshold for matches
    * @returns Array of MatchResults for all text matches found
    */
   findTextInOCRResults(
-    ocrData: any,
+    page: Page,
     searchText: string,
     minConfidence: number
   ): MatchResult<Region>[] {
-    console.log('ocrData', ocrData);
-
     const matches: MatchResult<Region>[] = [];
     const searchTextLower = searchText.toLowerCase();
 
-    // Check if we have text elements in the OCR data
-    if (!ocrData || !ocrData.words || !Array.isArray(ocrData.words)) {
+    // Check if we have blocks in the OCR data
+    if (!page.blocks || page.blocks.length === 0) {
       return matches;
     }
 
-    // Search through all words found by OCR
-    for (const word of ocrData.words) {
-      if (!word.text || word.confidence < minConfidence * 100) continue;
+    // Iterate through all blocks, paragraphs, lines, and words
+    for (const block of page.blocks) {
+      if (!block.paragraphs) continue;
 
-      const wordTextLower = word.text.toLowerCase();
+      for (const paragraph of block.paragraphs) {
+        if (!paragraph.lines) continue;
 
-      // Check if this word matches our search text
-      if (wordTextLower.includes(searchTextLower)) {
-        // Create a region for the matched text
-        const region = new Region(
-          word.bbox.x0,
-          word.bbox.y0,
-          word.bbox.x1 - word.bbox.x0,
-          word.bbox.y1 - word.bbox.y0
-        );
+        for (const line of paragraph.lines) {
+          if (!line.words) continue;
 
-        // Calculate confidence (convert from 0-100 to 0-1 scale)
-        const confidence = word.confidence / 100;
+          for (const word of line.words) {
+            if (!word.text || word.confidence < minConfidence * 100) continue;
 
-        matches.push(new MatchResult(confidence, region));
-      }
-    }
+            const wordTextLower = word.text.toLowerCase();
 
-    // If no direct word matches found, try to find text in lines
-    if (matches.length === 0 && ocrData.lines && Array.isArray(ocrData.lines)) {
-      for (const line of ocrData.lines) {
-        if (!line.text || line.confidence < minConfidence * 100) continue;
+            // Check if this word matches our search text
+            if (wordTextLower.includes(searchTextLower)) {
+              // Create a region for the matched text
+              const region = new Region(
+                word.bbox.x0,
+                word.bbox.y0,
+                word.bbox.x1 - word.bbox.x0,
+                word.bbox.y1 - word.bbox.y0
+              );
 
-        const lineTextLower = line.text.toLowerCase();
+              // Calculate confidence (convert from 0-100 to 0-1 scale)
+              const confidence = word.confidence / 100;
 
-        // Check if this line contains our search text
-        if (lineTextLower.includes(searchTextLower)) {
-          // Create a region for the matched line
-          const region = new Region(
-            line.bbox.x0,
-            line.bbox.y0,
-            line.bbox.x1 - line.bbox.x0,
-            line.bbox.y1 - line.bbox.y0
-          );
+              matches.push(new MatchResult(confidence, region));
+            }
+          }
 
-          // Calculate confidence (convert from 0-100 to 0-1 scale)
-          const confidence = line.confidence / 100;
+          // Also check the full line text for matches
+          if (line.text && line.confidence >= minConfidence * 100) {
+            const lineTextLower = line.text.toLowerCase();
 
-          matches.push(new MatchResult(confidence, region));
+            if (lineTextLower.includes(searchTextLower)) {
+              // Create a region for the matched line
+              const region = new Region(
+                line.bbox.x0,
+                line.bbox.y0,
+                line.bbox.x1 - line.bbox.x0,
+                line.bbox.y1 - line.bbox.y0
+              );
+
+              // Calculate confidence (convert from 0-100 to 0-1 scale)
+              const confidence = line.confidence / 100;
+
+              matches.push(new MatchResult(confidence, region));
+            }
+          }
         }
       }
     }
@@ -430,54 +569,6 @@ export class DefaultAdapter implements TextFinderInterface {
     await this.terminateWorker();
   }
 }
-
-// ==================== ADDITIONAL TEXT FINDER IMPLEMENTATIONS ====================
-
-/**
- * SimpleTextFinder implements a basic text finder for demonstration purposes
- * This implementation uses a simpler approach without external OCR dependencies
- */
-// export class SimpleTextFinder implements TextFinderInterface {
-//   /**
-//    * Default minimum confidence threshold for text matches
-//    */
-//   private readonly DEFAULT_CONFIDENCE = 0.7;
-
-//   /**
-//    * Finds a single match of the text query in the haystack image
-//    * @template PROVIDER_DATA_TYPE - Type of additional provider data
-//    * @param matchRequest - The match request containing haystack image and text query
-//    * @returns Promise resolving to a MatchResult with the best match found
-//    */
-//   async findMatch<PROVIDER_DATA_TYPE>(
-//     matchRequest: MatchRequest<TextQuery, PROVIDER_DATA_TYPE>
-//   ): Promise<MatchResult<Region>> {
-//     // Simple implementation that returns a mock result
-//     // In a real implementation, this would use proper text detection
-//     return new MatchResult(0.8, new Region(100, 100, 200, 50));
-//   }
-
-//   /**
-//    * Finds all matches of the text query in the haystack image
-//    * @template PROVIDER_DATA_TYPE - Type of additional provider data
-//    * @param matchRequest - The match request containing haystack image and text query
-//    * @returns Promise resolving to an array of MatchResults for all matches found
-//    */
-//   async findMatches<PROVIDER_DATA_TYPE>(
-//     matchRequest: MatchRequest<TextQuery, PROVIDER_DATA_TYPE>
-//   ): Promise<MatchResult<Region>[]> {
-//     // Simple implementation that returns mock results
-//     // In a real implementation, this would use proper text detection
-//     const { needle } = matchRequest;
-//     const searchText = 'line' in needle.by ? needle.by.line : needle.by.word;
-
-//     // Return multiple mock results for demonstration
-//     return [
-//       new MatchResult(0.8, new Region(100, 100, 200, 50)),
-//       new MatchResult(0.7, new Region(300, 200, 150, 40)),
-//     ];
-//   }
-// }
 
 // ==================== HELPER FUNCTIONS ====================
 
@@ -505,64 +596,64 @@ export function isRegion(possibleRegion: any): possibleRegion is Region {
 /**
  * Example usage of the TextFinder
  */
-async function exampleUsage(): Promise<void> {
-  try {
-    // Create a TextFinder instance
-    const textFinder = new DefaultAdapter();
+// async function exampleUsage(): Promise<void> {
+//   try {
+//     // Create a TextFinder instance
+//     const textFinder = new OCRTextFinder();
 
-    // Create a sample image (in a real scenario, this would be an actual image)
-    const sampleImage = new Image(
-      800,
-      600,
-      Buffer.alloc(800 * 600 * 3), // Empty buffer for demonstration
-      3,
-      'sample',
-      24,
-      800 * 3,
-      ColorMode.RGB
-    );
+//     // Create a sample image (in a real scenario, this would be an actual image)
+//     const sampleImage = new Image(
+//       800,
+//       600,
+//       Buffer.alloc(800 * 600 * 3), // Empty buffer for demonstration
+//       3,
+//       'sample',
+//       24,
+//       800 * 3,
+//       ColorMode.RGB
+//     );
 
-    // Create a text query to search for a word
-    const wordQuery: TextQuery = {
-      id: 'search-word',
-      type: 'text',
-      by: { word: 'Hello' },
-    };
+//     // Create a text query to search for a word
+//     const wordQuery: TextQuery = {
+//       id: 'search-word',
+//       type: 'text',
+//       by: { word: 'Hello' },
+//     };
 
-    // Create a match request
-    const matchRequest = new MatchRequest(
-      sampleImage,
-      wordQuery,
-      0.7 // Minimum confidence
-    );
+//     // Create a match request
+//     const matchRequest = new MatchRequest(
+//       sampleImage,
+//       wordQuery,
+//       0.7 // Minimum confidence
+//     );
 
-    // Find a single match
-    const matchResult = await textFinder.findMatch(matchRequest);
-    console.log(
-      `Found match with confidence ${matchResult.confidence} at ${matchResult.location.toString()}`
-    );
+//     // Find a single match
+//     const matchResult = await textFinder.findMatch(matchRequest);
+//     console.log(
+//       `Found match with confidence ${matchResult.confidence} at ${matchResult.location.toString()}`
+//     );
 
-    // Find all matches
-    const matchResults = await textFinder.findMatches(matchRequest);
-    matchResults.forEach((result, index) => {
-      console.log(
-        `Match ${index + 1}: confidence ${result.confidence} at ${result.location.toString()}`
-      );
-    });
+//     // Find all matches
+//     const matchResults = await textFinder.findMatches(matchRequest);
+//     matchResults.forEach((result, index) => {
+//       console.log(
+//         `Match ${index + 1}: confidence ${result.confidence} at ${result.location.toString()}`
+//       );
+//     });
 
-    // Clean up resources
-    await textFinder.cleanup();
-  } catch (error) {
-    console.error('Error in text finder example:', error);
-  }
-}
+//     // Clean up resources
+//     await textFinder.cleanup();
+//   } catch (error) {
+//     console.error('Error in text finder example:', error);
+//   }
+// }
 
-// Execute the example
-exampleUsage().catch(console.error);
+// // Execute the example
+// exampleUsage().catch(console.error);
+
+// Export the TextFinder interface and implementations
 
 const register = (adapter: InstanceType<typeof DefaultAdapter>) => {
   providerRegistry.registerTextFinder(adapter);
 };
-
-// Export the TextFinder interface and implementations
 export default { DefaultAdapter, register };

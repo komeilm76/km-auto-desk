@@ -49,7 +49,9 @@ const run = async () => {
   // });
 
   // text finder example
-  const x = screen.find(singleWord('Go'));
+  const x = screen.find(singleWord("Edit"));
+  console.log('x', await x);
+
   await mouse.move(straightTo(centerOf(x)));
 };
 run();
