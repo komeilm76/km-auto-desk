@@ -1,6 +1,4 @@
-const register = (...plugins: (() => void)[]) => {
-  plugins.forEach((item) => {
-    item();
-  });
-};
-export default { register };
+import nlMatcherPlugin from './nl-matcher-plugin';
+import ocrPlugin from './ocr-plugin';
+
+export default { ocrPlugin, nlMatcherPlugin };
